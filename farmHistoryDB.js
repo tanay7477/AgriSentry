@@ -1,7 +1,7 @@
 /**
  * AgriSentry Farm History Database (Persistent 7-Day Storage)
  *
- * Uses better-sqlite3 for zero-config local SQLite storage.
+ * Uses resilient pure-JS file persistence to avoid C++ binary compilation crashes on cloud Linux containers.
  * Automatically saves every scan record and prunes entries older than 7 days.
  *
  * Stored per scan:
@@ -14,76 +14,51 @@
  * - Environment: ambientTempC, humidity, rainProbabilityPct
  */
 
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
 // Ensure data directory exists
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+    } catch (e) {
+        console.warn('[FarmHistoryDB] Could not create data dir:', e.message);
+    }
 }
 
-const DB_PATH = path.join(DATA_DIR, 'farm_history.sqlite');
+const DB_FILE = path.join(DATA_DIR, 'farm_history.json');
 const RETENTION_DAYS = 7;
 
-let db;
+let recordsCache = [];
 
 /**
- * Initialize SQLite database and create table if not exists.
+ * Initialize storage and load existing records.
  */
 function initDB() {
     try {
-        db = new Database(DB_PATH);
-        db.pragma('journal_mode = WAL');
-
-        db.exec(`
-            CREATE TABLE IF NOT EXISTS farm_scan_history (
-                id TEXT PRIMARY KEY,
-                timestamp TEXT NOT NULL,
-                farmId TEXT NOT NULL,
-                growthStage TEXT,
-
-                diseaseLabel TEXT,
-                diseaseSeverityPercent REAL DEFAULT 0,
-                confidence REAL DEFAULT 0,
-                isHealthy INTEGER DEFAULT 1,
-
-                zone1NW_disease REAL DEFAULT 0,
-                zone2NE_disease REAL DEFAULT 0,
-                zone3SW_disease REAL DEFAULT 0,
-                zone4SE_disease REAL DEFAULT 0,
-
-                zone1Moisture REAL DEFAULT 0,
-                zone2Moisture REAL DEFAULT 0,
-                zone3Moisture REAL DEFAULT 0,
-                zone4Moisture REAL DEFAULT 0,
-                avgMoisture REAL DEFAULT 0,
-
-                pestCount INTEGER DEFAULT 0,
-                pestTrend TEXT DEFAULT 'STABLE',
-                pestRateOfChange REAL DEFAULT 0,
-
-                healthScore INTEGER DEFAULT 0,
-                healthCategory TEXT DEFAULT 'UNKNOWN',
-
-                ambientTempC REAL DEFAULT 0,
-                humidity REAL DEFAULT 0,
-                rainProbabilityPct REAL DEFAULT 0,
-
-                visionEngine TEXT DEFAULT 'Gemini',
-                createdAt INTEGER NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_farmId ON farm_scan_history(farmId);
-            CREATE INDEX IF NOT EXISTS idx_createdAt ON farm_scan_history(createdAt);
-        `);
-
-        console.log(`[FarmHistoryDB] SQLite database initialized: ${DB_PATH}`);
+        if (fs.existsSync(DB_FILE)) {
+            const raw = fs.readFileSync(DB_FILE, 'utf8');
+            recordsCache = JSON.parse(raw);
+            if (!Array.isArray(recordsCache)) recordsCache = [];
+        } else {
+            recordsCache = [];
+            fs.writeFileSync(DB_FILE, JSON.stringify(recordsCache), 'utf8');
+        }
+        console.log(`[FarmHistoryDB] Persistent storage initialized: ${DB_FILE} (${recordsCache.length} records loaded)`);
         return true;
     } catch (err) {
-        console.error('[FarmHistoryDB] Failed to initialize database:', err.message);
-        return false;
+        console.warn('[FarmHistoryDB] File load error, starting with in-memory storage:', err.message);
+        recordsCache = [];
+        return true;
+    }
+}
+
+function saveToFile() {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(recordsCache, null, 2), 'utf8');
+    } catch (err) {
+        console.warn('[FarmHistoryDB] Failed to persist records to file:', err.message);
     }
 }
 
@@ -94,11 +69,6 @@ function initDB() {
  * @param {Object} scanData - Full response payload + extra fields from /api/analyze
  */
 function insertScanRecord(scanData) {
-    if (!db) {
-        console.warn('[FarmHistoryDB] DB not initialized. Skipping record insert.');
-        return null;
-    }
-
     try {
         const now = Date.now();
         const id = `scan_${now}_${scanData.farmId || 'unknown'}`;
@@ -122,29 +92,7 @@ function insertScanRecord(scanData) {
         const irrigation = scanData.smartIrrigation || {};
         const weatherForecast = irrigation.weatherForecast || {};
 
-        const stmt = db.prepare(`
-            INSERT OR REPLACE INTO farm_scan_history (
-                id, timestamp, farmId, growthStage,
-                diseaseLabel, diseaseSeverityPercent, confidence, isHealthy,
-                zone1NW_disease, zone2NE_disease, zone3SW_disease, zone4SE_disease,
-                zone1Moisture, zone2Moisture, zone3Moisture, zone4Moisture, avgMoisture,
-                pestCount, pestTrend, pestRateOfChange,
-                healthScore, healthCategory,
-                ambientTempC, humidity, rainProbabilityPct,
-                visionEngine, createdAt
-            ) VALUES (
-                @id, @timestamp, @farmId, @growthStage,
-                @diseaseLabel, @diseaseSeverityPercent, @confidence, @isHealthy,
-                @zone1NW_disease, @zone2NE_disease, @zone3SW_disease, @zone4SE_disease,
-                @zone1Moisture, @zone2Moisture, @zone3Moisture, @zone4Moisture, @avgMoisture,
-                @pestCount, @pestTrend, @pestRateOfChange,
-                @healthScore, @healthCategory,
-                @ambientTempC, @humidity, @rainProbabilityPct,
-                @visionEngine, @createdAt
-            )
-        `);
-
-        stmt.run({
+        const record = {
             id,
             timestamp: new Date(now).toISOString(),
             farmId: scanData.farmId || 'unknown',
@@ -179,11 +127,15 @@ function insertScanRecord(scanData) {
 
             visionEngine: scanData.visionEngineUsed || 'Gemini',
             createdAt: now
-        });
+        };
+
+        // Prepend new record
+        recordsCache.unshift(record);
 
         console.log(`[FarmHistoryDB] Scan record saved: ${id} | Farm: ${scanData.farmId} | Disease: ${scanData.diseaseLabel} (${sev}%) | Pests: ${scanData.pestCount}`);
 
         pruneOldRecords();
+        saveToFile();
         return id;
     } catch (err) {
         console.error('[FarmHistoryDB] Failed to insert scan record:', err.message);
@@ -199,15 +151,12 @@ function insertScanRecord(scanData) {
  * @returns {Array}
  */
 function getHistory(farmId, days = 7) {
-    if (!db) return [];
     try {
         const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
-        const rows = db.prepare(`
-            SELECT * FROM farm_scan_history
-            WHERE farmId = ? AND createdAt >= ?
-            ORDER BY createdAt DESC
-        `).all(farmId, cutoff);
-        return rows.map(formatRow);
+        return recordsCache
+            .filter(r => r.farmId === farmId && r.createdAt >= cutoff)
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .map(formatRow);
     } catch (err) {
         console.error('[FarmHistoryDB] getHistory error:', err.message);
         return [];
@@ -221,19 +170,14 @@ function getHistory(farmId, days = 7) {
  * @returns {Object}
  */
 function getAllFarmsHistory(days = 7) {
-    if (!db) return {};
     try {
         const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
-        const rows = db.prepare(`
-            SELECT * FROM farm_scan_history
-            WHERE createdAt >= ?
-            ORDER BY farmId ASC, createdAt DESC
-        `).all(cutoff);
-
         const grouped = {};
-        for (const row of rows) {
-            if (!grouped[row.farmId]) grouped[row.farmId] = [];
-            grouped[row.farmId].push(formatRow(row));
+        for (const row of recordsCache) {
+            if (row.createdAt >= cutoff) {
+                if (!grouped[row.farmId]) grouped[row.farmId] = [];
+                grouped[row.farmId].push(formatRow(row));
+            }
         }
         return grouped;
     } catch (err) {
@@ -246,12 +190,13 @@ function getAllFarmsHistory(days = 7) {
  * Delete records older than RETENTION_DAYS.
  */
 function pruneOldRecords() {
-    if (!db) return;
     try {
         const cutoff = Date.now() - (RETENTION_DAYS * 24 * 60 * 60 * 1000);
-        const result = db.prepare('DELETE FROM farm_scan_history WHERE createdAt < ?').run(cutoff);
-        if (result.changes > 0) {
-            console.log(`[FarmHistoryDB] Pruned ${result.changes} records older than ${RETENTION_DAYS} days.`);
+        const prevLen = recordsCache.length;
+        recordsCache = recordsCache.filter(r => r.createdAt >= cutoff);
+        if (recordsCache.length < prevLen) {
+            console.log(`[FarmHistoryDB] Pruned ${prevLen - recordsCache.length} records older than ${RETENTION_DAYS} days.`);
+            saveToFile();
         }
     } catch (err) {
         console.error('[FarmHistoryDB] pruneOldRecords error:', err.message);
@@ -262,12 +207,7 @@ function pruneOldRecords() {
  * Get total record count in DB.
  */
 function getTotalCount() {
-    if (!db) return 0;
-    try {
-        return db.prepare('SELECT COUNT(*) as cnt FROM farm_scan_history').get()?.cnt || 0;
-    } catch {
-        return 0;
-    }
+    return recordsCache.length;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
