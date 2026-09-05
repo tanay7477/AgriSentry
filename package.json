@@ -1,0 +1,22 @@
+{
+  "name": "agrisentry",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "npm --prefix frontend install && npm --prefix frontend run build",
+    "test": "node test_voice_assistant.js && node test_feature_8_scalable_deployment.js && node test_feature_7_analytics.js && node test_feature_6_advisory.js && node test_features_1_and_2.js && node test_irrigation_feature.js && node test_environmental_feature.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^2.21.0",
+    "@huggingface/inference": "^4.13.28",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.3.0"
+  }
+}
