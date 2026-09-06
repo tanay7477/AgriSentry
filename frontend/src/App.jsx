@@ -2237,8 +2237,8 @@ export default function App() {
                     </div>
                     <p className="text-xs text-slate-400 mt-1">
                       {language === 'hi' 
-                        ? `लाइव स्कैन आधारित आय सुरक्षा मॉडल (${detectedCropName === 'Potato' ? 'आलू' : 'टमाटर'} @ ₹${(mandiPricePerTon/1000)}/क्विंटल APMC मंडी भाव, ${economicAcreage} एकड़ प्लॉट)` 
-                        : `Dynamic yield preservation model calibrated for ${detectedCropName} @ ₹${(mandiPricePerTon/1000)}/quintal APMC mandi rate across ${economicAcreage} acre plot`}
+                        ? `लाइव स्कैन आधारित आय सुरक्षा मॉडल (${detectedCropName === 'Potato' ? 'आलू' : 'टमाटर'} @ ₹${(mandiPricePerTon/1000)}/किग्रा APMC मंडी भाव, ${economicAcreage} एकड़ प्लॉट)` 
+                        : `Dynamic yield preservation model calibrated for ${detectedCropName} @ ₹${(mandiPricePerTon/1000)}/kg APMC mandi rate across ${economicAcreage} acre plot`}
                     </p>
                   </div>
 
@@ -2308,8 +2308,8 @@ export default function App() {
                     <span className="text-emerald-400 font-bold">ℹ️ FORMULA:</span>
                     <span>
                       {isHealthyScan 
-                        ? `Acreage (${economicAcreage} Ac) × Base Potential (${baseYieldPerAcre} T/Ac) × Mandi MSP (₹${(mandiPricePerTon/1000)}/qtl) = ₹${farmerNetSaved.toLocaleString('en-IN')}`
-                        : `Threatened Loss [${economicAcreage} Ac × ${baseYieldPerAcre} T × ${currentSeverity}% = ${unmitigatedLossTons}T] × 81% IPM Recovery × ₹${(mandiPricePerTon/1000)}/qtl = ₹${farmerNetSaved.toLocaleString('en-IN')}`}
+                        ? `Acreage (${economicAcreage} Ac) × Base Potential (${baseYieldPerAcre} T/Ac) × Mandi Rate (₹${(mandiPricePerTon/1000)}/kg) = ₹${farmerNetSaved.toLocaleString('en-IN')}`
+                        : `Threatened Loss [${economicAcreage} Ac × ${baseYieldPerAcre} T × ${currentSeverity}% = ${unmitigatedLossTons}T] × 81% IPM Recovery × ₹${(mandiPricePerTon/1000)}/kg = ₹${farmerNetSaved.toLocaleString('en-IN')}`}
                     </span>
                   </div>
                   <span className="text-[9.5px] font-mono text-slate-500 shrink-0">
